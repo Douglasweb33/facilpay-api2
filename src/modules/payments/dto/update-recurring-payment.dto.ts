@@ -7,8 +7,13 @@ import {
   MaxLength,
   IsPositive,
 } from 'class-validator';
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RecurringPaymentInterval } from '../recurring-payment.entity';
+
+export enum RecurringPaymentProrationBehavior {
+  NONE = 'none',
+  CREATE_ADJUSTMENT = 'create_adjustment',
+}
 
 export class UpdateRecurringPaymentDto {
   @IsNumber()
@@ -21,6 +26,15 @@ export class UpdateRecurringPaymentDto {
     minimum: 0.01,
   })
   amount?: number;
+
+  @IsEnum(RecurringPaymentProrationBehavior)
+  @IsOptional()
+  @ApiPropertyOptional({
+    enum: RecurringPaymentProrationBehavior,
+    description: 'Whether to prorate an amount change for the current period',
+    default: RecurringPaymentProrationBehavior.NONE,
+  })
+  prorationBehavior?: RecurringPaymentProrationBehavior;
 
   @IsEnum(RecurringPaymentInterval, {
     message:
@@ -44,4 +58,16 @@ export class UpdateRecurringPaymentDto {
     maxLength: 500,
   })
   description?: string;
+}
+
+export class PreviewRecurringPaymentProrationDto {
+  @IsNumber()
+  @IsPositive({ message: 'Amount must be a positive number' })
+  @Min(0.01, { message: 'Amount must be at least 0.01' })
+  @ApiProperty({
+    description: 'Proposed recurring amount to preview',
+    example: 34.99,
+    minimum: 0.01,
+  })
+  amount: number;
 }

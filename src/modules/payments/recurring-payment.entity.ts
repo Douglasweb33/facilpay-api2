@@ -27,6 +27,12 @@ export class RecurringPayment {
   @Column({ type: 'decimal', precision: 10, scale: 2 })
   amount: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  pendingProrationAmount: number | null;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, nullable: true })
+  prorationBaseAmount: number | null;
+
   @Column()
   currency: string;
 

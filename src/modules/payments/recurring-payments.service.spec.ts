@@ -11,6 +11,7 @@ import {
 import {
   RecurringPaymentChargeStatus,
 } from './recurring-payment-charge.entity';
+import { RecurringPaymentProrationBehavior } from './dto/update-recurring-payment.dto';
 
 describe('RecurringPaymentsService', () => {
   let service: RecurringPaymentsService;
@@ -22,6 +23,7 @@ describe('RecurringPaymentsService', () => {
   let mockAppLogger: any;
 
   beforeEach(() => {
+    jest.useRealTimers();
     mockCustomerRepository = {
       findOneBy: jest.fn(),
     };
@@ -68,6 +70,48 @@ describe('RecurringPaymentsService', () => {
       { get: jest.fn((_key, defaultValue) => defaultValue) } as any,
       mockAppLogger,
     );
+  });
+
+  describe('update', () => {
+    it('keeps amount updates unchanged when proration behavior is omitted', async () => {
+      const plan = {
+        id: 'plan-1',
+        createdBy: 'user-1',
+        amount: 20,
+        pendingProrationAmount: 5,
+        prorationBaseAmount: 10,
+      };
+      mockRepository.findOneBy.mockResolvedValue(plan);
+
+      const updated = await service.update('plan-1', 'user-1', { amount: 30 });
+
+      expect(updated.amount).toBe(30);
+      expect(updated.pendingProrationAmount).toBeNull();
+      expect(updated.prorationBaseAmount).toBeNull();
+    });
+
+    it('stores a prorated amount adjustment for the next charge', async () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-01-04T00:00:00.000Z'));
+      const plan = {
+        id: 'plan-1',
+        createdBy: 'user-1',
+        amount: 20,
+        lastRunAt: new Date('2026-01-01T00:00:00.000Z'),
+        nextRunAt: new Date('2026-01-11T00:00:00.000Z'),
+      };
+      mockRepository.findOneBy.mockResolvedValue(plan);
+
+      const updated = await service.update('plan-1', 'user-1', {
+        amount: 30,
+        prorationBehavior:
+          RecurringPaymentProrationBehavior.CREATE_ADJUSTMENT,
+      });
+
+      expect(updated.amount).toBe(30);
+      expect(updated.pendingProrationAmount).toBe(7);
+      expect(updated.prorationBaseAmount).toBe(20);
+      jest.useRealTimers();
+    });
   });
 
   describe('create', () => {
@@ -324,6 +368,39 @@ describe('RecurringPaymentsService', () => {
           status: RecurringPaymentChargeStatus.SUCCEEDED,
         }),
       );
+    });
+
+    it('adds a pending proration adjustment to the next charge and consumes it on success', async () => {
+      const dueAt = new Date('2026-07-11T00:00:00.000Z');
+      const plan = {
+        id: 'plan-1',
+        amount: 30,
+        pendingProrationAmount: 7,
+        prorationBaseAmount: 20,
+        currency: 'USD',
+        interval: RecurringPaymentInterval.DAILY,
+        status: RecurringPaymentStatus.ACTIVE,
+        nextRunAt: dueAt,
+        description: null,
+        merchantId: null,
+        merchantEmail: null,
+        payerEmail: null,
+        callbackUrl: null,
+        metadata: null,
+      };
+      mockRepository.find.mockResolvedValue([plan]);
+
+      await service.processDuePlans();
+
+      expect(mockPaymentsService.create).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 37, currency: 'USD' }),
+        'plan-1',
+      );
+      expect(mockChargeRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 37, prorationAmount: 7 }),
+      );
+      expect(plan.pendingProrationAmount).toBeNull();
+      expect(plan.prorationBaseAmount).toBeNull();
     });
 
     it('records a failed charge attempt and its failure reason', async () => {
