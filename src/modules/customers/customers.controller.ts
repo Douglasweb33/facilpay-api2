@@ -34,13 +34,17 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { User } from '../users/user.entity';
 import { PaginatedResult } from '../../common/interfaces/paginated-result.interface';
+import { CustomerPortalService } from './customer-portal.service';
 
 @ApiTags('customers')
 @ApiBearerAuth('bearer')
 @UseGuards(JwtAuthGuard)
 @Controller('v1/customers')
 export class CustomersController {
-  constructor(private readonly customersService: CustomersService) {}
+  constructor(
+    private readonly customersService: CustomersService,
+    private readonly customerPortalService: CustomerPortalService,
+  ) {}
 
   @Post()
   @ApiOperation({
@@ -113,6 +117,34 @@ export class CustomersController {
     @CurrentUser() user: User,
   ): Promise<Customer> {
     return this.customersService.findOne(id, user.id);
+  }
+
+  @Post(':id/portal-sessions')
+  @ApiOperation({
+    summary: 'Create a customer portal session',
+    description:
+      'Creates a signed, customer-scoped portal URL that expires after one hour by default.',
+  })
+  @ApiParam({ name: 'id', description: 'Customer UUID' })
+  @ApiCreatedResponse({
+    description: 'Short-lived portal URL created.',
+    schema: {
+      example: {
+        url: 'https://api.example.com/v1/public/customer-portal?token=<signed-token>',
+        expiresAt: '2026-10-21T13:00:00.000Z',
+      },
+    },
+  })
+  @ApiNotFoundResponse({
+    description:
+      'Customer not found or not owned by the authenticated merchant.',
+  })
+  @ApiUnauthorizedResponse({ description: 'Missing or invalid JWT.' })
+  createPortalSession(
+    @Param('id') id: string,
+    @CurrentUser() user: User,
+  ): Promise<{ url: string; expiresAt: string }> {
+    return this.customerPortalService.createSession(id, user.id);
   }
 
   @Patch(':id')
