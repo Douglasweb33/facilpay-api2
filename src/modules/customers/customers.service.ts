@@ -10,12 +10,15 @@ import { CreateCustomerDto } from './dto/create-customer.dto';
 import { GetCustomersDto } from './dto/get-customers.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { PaginatedResult } from '../../common/interfaces/paginated-result.interface';
+import { WebhooksService } from '../webhooks/webhooks.service';
+import { serializeCustomer } from '../webhooks/payload-serializers/customer.serializer';
 
 @Injectable()
 export class CustomersService {
   constructor(
     @InjectRepository(Customer)
     private readonly customerRepository: Repository<Customer>,
+    private readonly webhooksService: WebhooksService,
   ) {}
 
   async create(merchantId: string, dto: CreateCustomerDto): Promise<Customer> {
@@ -27,7 +30,9 @@ export class CustomersService {
       metadata: dto.metadata ?? null,
     });
 
-    return this.saveWithoutDuplicateEmail(customer);
+    const saved = await this.saveWithoutDuplicateEmail(customer);
+    await this.dispatchCustomerEvent('customer.created', saved);
+    return saved;
   }
 
   async findAll(
@@ -93,12 +98,15 @@ export class CustomersService {
       customer.metadata = dto.metadata;
     }
 
-    return this.saveWithoutDuplicateEmail(customer);
+    const saved = await this.saveWithoutDuplicateEmail(customer);
+    await this.dispatchCustomerEvent('customer.updated', saved);
+    return saved;
   }
 
   async remove(id: string, merchantId: string): Promise<void> {
     const customer = await this.findOne(id, merchantId);
     await this.customerRepository.softDelete(customer.id);
+    await this.dispatchCustomerEvent('customer.deleted', customer);
   }
 
   private normalizeEmail(email: string): string {
@@ -133,5 +141,14 @@ export class CustomersService {
     const driverError = (error as { driverError?: { code?: string } })
       .driverError;
     return driverError?.code === '23505';
+  }
+
+  private async dispatchCustomerEvent(event: string, customer: Customer): Promise<void> {
+    try {
+      const payload = serializeCustomer(customer);
+      await this.webhooksService.dispatchEventToMerchant(customer.merchantId, event, payload);
+    } catch {
+      // Webhook delivery failures must not break the customer operation.
+    }
   }
 }

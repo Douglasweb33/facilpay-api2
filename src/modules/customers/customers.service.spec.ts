@@ -13,6 +13,7 @@ describe('CustomersService', () => {
     createQueryBuilder: jest.Mock;
   };
   let queryBuilder: Record<string, jest.Mock>;
+  let webhooksService: { dispatchEventToMerchant: jest.Mock };
 
   beforeEach(() => {
     queryBuilder = {
@@ -31,8 +32,12 @@ describe('CustomersService', () => {
       softDelete: jest.fn().mockResolvedValue({ affected: 1 }),
       createQueryBuilder: jest.fn().mockReturnValue(queryBuilder),
     };
+    webhooksService = {
+      dispatchEventToMerchant: jest.fn().mockResolvedValue(undefined),
+    };
     service = new CustomersService(
       repository as unknown as Repository<Customer>,
+      webhooksService as any,
     );
   });
 
@@ -54,6 +59,24 @@ describe('CustomersService', () => {
     expect(result.merchantId).toBe('merchant-1');
   });
 
+  it('dispatches customer.created after creating a customer', async () => {
+    await service.create('merchant-1', {
+      email: 'jane@example.com',
+      name: 'Jane',
+      metadata: { tier: 'gold' },
+    });
+
+    expect(webhooksService.dispatchEventToMerchant).toHaveBeenCalledWith(
+      'merchant-1',
+      'customer.created',
+      expect.objectContaining({
+        email: 'jane@example.com',
+        name: 'Jane',
+        metadata: { tier: 'gold' },
+      }),
+    );
+  });
+
   it('maps a case-insensitive unique-index violation to ConflictException', async () => {
     repository.save.mockRejectedValueOnce({
       driverError: { code: '23505' },
@@ -62,6 +85,18 @@ describe('CustomersService', () => {
     await expect(
       service.create('merchant-1', { email: 'jane@example.com' }),
     ).rejects.toThrow(ConflictException);
+  });
+
+  it('does not dispatch customer.created when save throws', async () => {
+    repository.save.mockRejectedValueOnce({
+      driverError: { code: '23505' },
+    });
+
+    await expect(
+      service.create('merchant-1', { email: 'jane@example.com' }),
+    ).rejects.toThrow(ConflictException);
+
+    expect(webhooksService.dispatchEventToMerchant).not.toHaveBeenCalled();
   });
 
   it('lists only active customers for the merchant with search and pagination', async () => {
@@ -130,6 +165,30 @@ describe('CustomersService', () => {
     expect(result.metadata).toEqual({ vip: true });
   });
 
+  it('dispatches customer.updated after updating a customer', async () => {
+    repository.findOneBy.mockResolvedValueOnce({
+      id: 'customer-1',
+      merchantId: 'merchant-1',
+      email: 'old@example.com',
+      name: 'Old Name',
+      phone: null,
+      metadata: null,
+    });
+
+    await service.update('customer-1', 'merchant-1', {
+      email: 'new@example.com',
+    });
+
+    expect(webhooksService.dispatchEventToMerchant).toHaveBeenCalledWith(
+      'merchant-1',
+      'customer.updated',
+      expect.objectContaining({
+        customerId: 'customer-1',
+        email: 'new@example.com',
+      }),
+    );
+  });
+
   it('soft-deletes only after confirming ownership', async () => {
     repository.findOneBy.mockResolvedValueOnce({
       id: 'customer-1',
@@ -139,5 +198,57 @@ describe('CustomersService', () => {
     await service.remove('customer-1', 'merchant-1');
 
     expect(repository.softDelete).toHaveBeenCalledWith('customer-1');
+  });
+
+  it('dispatches customer.deleted after soft-deleting a customer', async () => {
+    repository.findOneBy.mockResolvedValueOnce({
+      id: 'customer-1',
+      merchantId: 'merchant-1',
+      email: 'jane@example.com',
+    });
+
+    await service.remove('customer-1', 'merchant-1');
+
+    expect(webhooksService.dispatchEventToMerchant).toHaveBeenCalledWith(
+      'merchant-1',
+      'customer.deleted',
+      expect.objectContaining({
+        customerId: 'customer-1',
+        email: 'jane@example.com',
+      }),
+    );
+  });
+
+  it('includes metadata and timestamps in the webhook payload', async () => {
+    const createdAt = new Date('2026-01-01T00:00:00.000Z');
+    const updatedAt = new Date('2026-01-02T00:00:00.000Z');
+    repository.save.mockResolvedValueOnce({
+      id: 'cust-42',
+      merchantId: 'merchant-1',
+      email: 'jane@example.com',
+      name: 'Jane',
+      phone: '+1234567890',
+      metadata: { plan: 'pro' },
+      createdAt,
+      updatedAt,
+      deletedAt: null,
+    });
+
+    await service.create('merchant-1', {
+      email: 'jane@example.com',
+      name: 'Jane',
+    });
+
+    const payload = webhooksService.dispatchEventToMerchant.mock.calls[0][2];
+    expect(payload).toEqual({
+      customerId: 'cust-42',
+      merchantId: 'merchant-1',
+      email: 'jane@example.com',
+      name: 'Jane',
+      phone: '+1234567890',
+      metadata: { plan: 'pro' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    });
   });
 });
