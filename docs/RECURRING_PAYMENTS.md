@@ -45,6 +45,7 @@ The base path is `/v1/recurring-payments`.
 | `endAt` | ISO-8601 | no | `null` | Must be in the future. Plan auto-cancels once the next run would exceed it. |
 | `maxOccurrences` | number | no | `null` | `≥ 1`. Successful charges before the plan auto-cancels. |
 | `notifyDaysBefore` | integer | no | `3` | `0–14`. Days before a charge to email the payer. `0` disables reminders. |
+| `payerCancellationEnabled` | boolean | no | `true` | Include a signed, single-use cancellation link in payer reminders. Set to `false` to opt out. |
 
 `interval` copies forward: `PATCH` changes apply to **future** scheduled runs only — payments that
 already exist are never modified.
@@ -231,8 +232,9 @@ Charge statuses are `pending`, `succeeded` and `failed`.
 PATCH /v1/recurring-payments/:id
 ```
 
-Only `amount`, `interval` and `description` are mutable. Changes take effect on the **next**
-scheduled run; existing payments are untouched.
+`amount`, `interval`, `description` and `payerCancellationEnabled` are mutable. Changes take effect
+on the **next** scheduled run; existing payments are untouched. Disabling payer cancellation
+invalidates any previously issued cancellation link.
 
 ```bash
 curl -X PATCH http://localhost:3000/v1/recurring-payments/9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8 \
@@ -281,6 +283,22 @@ curl -X POST http://localhost:3000/v1/recurring-payments/9f1c2b3a-4d5e-6f70-8192
 
 Sets `status` to `cancelled` and stamps `cancelledAt`. Returns `409 Conflict` when the plan is
 already cancelled. Cancelling is terminal — a cancelled plan cannot be resumed.
+
+### Payer self-service cancellation
+
+When enabled, pre-charge reminders include a signed cancellation link that expires after 30 days.
+Opening the link validates the token and returns plan details without changing the plan; the payer
+must explicitly confirm using:
+
+```
+GET  /v1/recurring-payments/public/cancel?token=<signed-token>
+POST /v1/recurring-payments/public/cancel
+```
+
+The confirmation request body is `{"token":"<signed-token>"}`. Tokens are stored hashed, consumed
+atomically on confirmation, and cannot be replayed. Successful cancellation emits the
+`recurring.cancelled` merchant webhook event. Invalid, expired, disabled, or previously used links
+return `400 Bad Request`.
 
 ## Scheduling and execution
 

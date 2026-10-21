@@ -25,6 +25,7 @@ import { CreateRecurringPaymentDto } from './dto/create-recurring-payment.dto';
 import { UpdateRecurringPaymentDto } from './dto/update-recurring-payment.dto';
 import { RecurringPayment } from './recurring-payment.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { Public } from '../auth/decorators/public.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('recurring-payments')
@@ -32,6 +33,29 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 @UseGuards(JwtAuthGuard)
 export class RecurringPaymentsController {
   constructor(private readonly service: RecurringPaymentsService) {}
+
+  @Get('public/cancel')
+  @Public()
+  @ApiOperation({
+    summary: 'Review a payer cancellation request',
+    description: 'Validates a signed cancellation link without changing the plan. Confirm by submitting the token to POST /public/cancel.',
+  })
+  @ApiQuery({ name: 'token', required: true, type: String })
+  @ApiOkResponse({ description: 'Plan details for the confirmation step.' })
+  getPayerCancellation(@Query('token') token: string) {
+    return this.service.getPayerCancellation(token);
+  }
+
+  @Post('public/cancel')
+  @Public()
+  @ApiOperation({
+    summary: 'Confirm and cancel a recurring plan as its payer',
+    description: 'Consumes a valid, unexpired cancellation token and cancels the plan once.',
+  })
+  @ApiOkResponse({ description: 'Plan cancelled.' })
+  cancelAsPayer(@Body('token') token: string) {
+    return this.service.cancelWithToken(token);
+  }
 
   @Post()
   @ApiBearerAuth('bearer')
