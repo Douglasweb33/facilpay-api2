@@ -443,6 +443,21 @@ export class AuthService {
     return { access_token, refresh_token, user: userWithoutPassword };
   }
 
+  async completeOAuthLogin(
+    userId: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ) {
+    const user = await this.usersService.findByIdWithSecrets(userId);
+    if (!user || user.deletedAt || !user.isActive) {
+      throw new UnauthorizedException('OAuth login is not available for this account');
+    }
+    if (this.usersService.isAccountLocked(user)) {
+      throw new ForbiddenException('Account is locked. Please try again later.');
+    }
+    return this.completeLogin(user, ipAddress, userAgent);
+  }
+
   async enableTwoFactor(
     userId: string,
     ipAddress?: string,
