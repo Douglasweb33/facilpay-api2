@@ -21,6 +21,7 @@ Customer email addresses are unique per merchant (case-insensitive). Multiple me
     "tier": "gold",
     "locale": "en-US"
   },
+  "tags": ["vip", "wholesale"],
   "createdAt": "2026-09-25T10:00:00.000Z",
   "updatedAt": "2026-09-25T10:00:00.000Z",
   "deletedAt": null
@@ -35,6 +36,7 @@ Customer email addresses are unique per merchant (case-insensitive). Multiple me
 | `name` | String | Customer display name (nullable) |
 | `phone` | String | Customer phone number (nullable) |
 | `metadata` | Object | Arbitrary JSON object (nullable) |
+| `tags` | String[] | Segmentation tags, lowercase, unique, at most 20 (empty array when untagged) |
 | `createdAt` | Timestamp | Creation timestamp |
 | `updatedAt` | Timestamp | Last update timestamp |
 | `deletedAt` | Timestamp | Soft-delete timestamp (null if active) |
@@ -65,6 +67,7 @@ Authorization: Bearer <access_token>
 - `name` (optional) — Customer display name. Max 255 characters.
 - `phone` (optional) — Customer phone number. Max 50 characters.
 - `metadata` (optional) — Arbitrary JSON object supplied by the merchant.
+- `tags` (optional) — Up to 20 tags of at most 50 characters each. Tags are trimmed and lowercased, and duplicates and blanks are dropped, so `["VIP", " vip "]` is stored as `["vip"]`.
 
 **Response (201 Created):**
 ```json
@@ -118,7 +121,7 @@ Authorization: Bearer <access_token>
 ## List Customers
 
 ```
-GET /v1/customers?page=1&limit=20&search=jane
+GET /v1/customers?page=1&limit=20&search=jane&tag=vip
 Authorization: Bearer <access_token>
 ```
 
@@ -128,6 +131,7 @@ Returns a paginated list of active customers owned by the authenticated merchant
 - `page` (optional) — Page number (default: 1)
 - `limit` (optional) — Items per page (default: 20, max: 100)
 - `search` (optional) — Case-insensitive partial match against email or name
+- `tag` (optional) — Only return customers carrying this tag. Matched case-insensitively and combined with `search` using AND. The filter uses a GIN index on `tags`.
 
 **Response (200 OK):**
 ```json
@@ -270,7 +274,7 @@ Authorization: Bearer <access_token>
 }
 ```
 
-All fields are optional. To clear a nullable field, send `null`:
+All fields are optional. `tags` replaces the whole tag set (same normalisation as on create); send `[]` to remove every tag. To clear a nullable field, send `null`:
 
 ```json
 {
@@ -525,6 +529,7 @@ email        VARCHAR(320) NOT NULL
 name         VARCHAR(255)
 phone        VARCHAR(50)
 metadata     JSONB
+tags         TEXT[] NOT NULL DEFAULT '{}'
 createdAt    TIMESTAMP NOT NULL
 updatedAt    TIMESTAMP NOT NULL
 deletedAt    TIMESTAMP  -- Soft delete timestamp
@@ -532,9 +537,10 @@ deletedAt    TIMESTAMP  -- Soft delete timestamp
 UNIQUE (merchantId, email) WHERE deletedAt IS NULL
 INDEX idx_customers_merchant_id (merchantId)
 INDEX idx_customers_email (email)
+INDEX IDX_customers_tags USING GIN (tags)
 ```
 
-Migration: TBD
+Migration: TBD. The `tags` column and its GIN index are added by `AddTagsToCustomers1792500000000`.
 
 ---
 

@@ -74,6 +74,18 @@ export class WebhookEndpoint {
   })
   secret: string;
 
+  @Column({ type: 'varchar', length: 255, nullable: true })
+  previousSecret: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  @ApiPropertyOptional({
+    description:
+      'While in the future, deliveries are also signed with the previous secret',
+    example: '2026-01-27T10:00:00.000Z',
+    nullable: true,
+  })
+  previousSecretExpiresAt: Date | null;
+
   @Column({ type: 'int', default: 0 })
   consecutiveFailures: number;
 

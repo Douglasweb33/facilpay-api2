@@ -48,6 +48,21 @@ export const encryptedHeadersTransformer: ValueTransformer = {
   },
 };
 
-export function maskEndpoint<T extends { headers?: Record<string, string> | null }>(endpoint: T): T {
-  return { ...endpoint, ...(endpoint.headers ? { headers: Object.fromEntries(Object.keys(endpoint.headers).map(name => [name, '********'])) } : {}) };
+export function maskEndpoint<
+  T extends {
+    headers?: Record<string, string> | null;
+    previousSecret?: string | null;
+  },
+>(endpoint: T): T {
+  return {
+    ...endpoint,
+    ...(endpoint.headers
+      ? {
+          headers: Object.fromEntries(
+            Object.keys(endpoint.headers).map((name) => [name, '********']),
+          ),
+        }
+      : {}),
+    ...(endpoint.previousSecret ? { previousSecret: '********' } : {}),
+  };
 }

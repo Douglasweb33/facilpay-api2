@@ -3,7 +3,7 @@ import { BalanceHistoryDto } from './dto/balance-history.dto';
 import { MerchantSettings } from '../merchants/entities/merchant-settings.entity';
 import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, SelectQueryBuilder } from 'typeorm';
 import { LedgerAccount, LedgerEntry } from './ledger-entry.entity';
 import {
   appendLedgerTransaction,
@@ -11,6 +11,13 @@ import {
 } from './ledger-transaction';
 import { GetLedgerEntriesDto } from './dto/get-ledger-entries.dto';
 import { PaginatedResult } from '../../common/interfaces/paginated-result.interface';
+import { buildCsv, EXPORT_COLUMNS } from '../exports/exports.service';
+
+/**
+ * Largest range `format=csv` builds inline. Bigger ranges must run as a
+ * background job (`POST /v1/exports` with `resource: "ledger"`).
+ */
+export const LEDGER_CSV_SYNC_ROW_LIMIT = 5000;
 
 export interface LedgerBalance {
   currency: string;
@@ -123,7 +130,58 @@ export class LedgerService {
     const query = this.ledgerRepository
       .createQueryBuilder('entry')
       .where('entry.merchantId = :merchantId', { merchantId });
+    this.applyLedgerFilters(query, dto);
 
+    const [data, total] = await query
+      .orderBy('entry.createdAt', 'DESC')
+      .addOrderBy('entry.id', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return { data, total, page, limit };
+  }
+
+  /**
+   * Builds the CSV for `GET /v1/merchants/me/ledger?format=csv`. Entries are
+   * oldest first so the file reads like a statement. Ranges above
+   * LEDGER_CSV_SYNC_ROW_LIMIT are refused and must use a background export.
+   */
+  async exportCsv(
+    merchantId: string,
+    dto: GetLedgerEntriesDto,
+  ): Promise<string> {
+    if (!dto.from || !dto.to) {
+      throw new BadRequestException('format=csv requires both from and to');
+    }
+    if (new Date(dto.from).getTime() > new Date(dto.to).getTime()) {
+      throw new BadRequestException('from must be earlier than or equal to to');
+    }
+
+    const query = this.ledgerRepository
+      .createQueryBuilder('entry')
+      .where('entry.merchantId = :merchantId', { merchantId });
+    this.applyLedgerFilters(query, dto);
+
+    const entries = await query
+      .orderBy('entry.createdAt', 'ASC')
+      .addOrderBy('entry.id', 'ASC')
+      .take(LEDGER_CSV_SYNC_ROW_LIMIT + 1)
+      .getMany();
+    if (entries.length > LEDGER_CSV_SYNC_ROW_LIMIT) {
+      throw new BadRequestException(
+        `Range has more than ${LEDGER_CSV_SYNC_ROW_LIMIT} entries. ` +
+          'Use POST /v1/exports with resource "ledger" to run it as a background job.',
+      );
+    }
+
+    return buildCsv(EXPORT_COLUMNS.ledger, entries);
+  }
+
+  private applyLedgerFilters(
+    query: SelectQueryBuilder<LedgerEntry>,
+    dto: GetLedgerEntriesDto,
+  ): void {
     if (dto.currency) {
       query.andWhere('entry.currency = :currency', {
         currency: dto.currency.toUpperCase(),
@@ -143,15 +201,6 @@ export class LedgerService {
     if (dto.to) {
       query.andWhere('entry.createdAt <= :to', { to: new Date(dto.to) });
     }
-
-    const [data, total] = await query
-      .orderBy('entry.createdAt', 'DESC')
-      .addOrderBy('entry.id', 'DESC')
-      .skip((page - 1) * limit)
-      .take(limit)
-      .getManyAndCount();
-
-    return { data, total, page, limit };
   }
 
   async checkConsistency(): Promise<LedgerConsistencyReport> {

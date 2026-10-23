@@ -58,6 +58,10 @@ export class WebhookDelivery {
   @Column({ type: 'text', nullable: true })
   lastError: string | null;
 
+  /** Truncated body of the latest response from the endpoint. */
+  @Column({ type: 'text', nullable: true })
+  lastResponseBody: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

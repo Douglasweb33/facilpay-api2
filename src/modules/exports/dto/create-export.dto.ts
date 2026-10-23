@@ -10,8 +10,10 @@ import {
 import { ExportFilters, ExportFormat, ExportType } from '../exports.service';
 
 export class CreateExportDto {
-  @ApiProperty({ enum: ['payments', 'customers', 'invoices', 'refunds'] })
-  @IsIn(['payments', 'customers', 'invoices', 'refunds'])
+  @ApiProperty({
+    enum: ['payments', 'customers', 'invoices', 'refunds', 'ledger'],
+  })
+  @IsIn(['payments', 'customers', 'invoices', 'refunds', 'ledger'])
   resource: ExportType;
 
   @ApiPropertyOptional({ enum: ['csv', 'pdf'], default: 'csv' })

@@ -1,6 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
+import { validate } from 'class-validator';
 import { CustomersService } from './customers.service';
 import { Customer } from './customer.entity';
+import { CreateCustomerDto } from './dto/create-customer.dto';
 import { Repository } from 'typeorm';
 
 describe('CustomersService', () => {
@@ -33,6 +35,8 @@ describe('CustomersService', () => {
     };
     service = new CustomersService(
       repository as unknown as Repository<Customer>,
+      {} as any,
+      {} as any,
     );
   });
 
@@ -50,8 +54,43 @@ describe('CustomersService', () => {
       name: 'Jane Doe',
       phone: null,
       metadata: { tier: 'gold' },
+      tags: [],
     });
     expect(result.merchantId).toBe('merchant-1');
+  });
+
+  it('normalises tags to trimmed lowercase without duplicates or blanks', async () => {
+    await service.create('merchant-1', {
+      email: 'jane@example.com',
+      tags: [' VIP ', 'vip', 'Wholesale', '   '],
+    });
+
+    expect(repository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: ['vip', 'wholesale'] }),
+    );
+  });
+
+  it('rejects too many, oversized, or non-string tags', async () => {
+    const invalid = [
+      Array.from({ length: 21 }, (_, i) => `tag-${i}`),
+      ['x'.repeat(51)],
+      [42],
+    ];
+
+    for (const tags of invalid) {
+      const dto = Object.assign(new CreateCustomerDto(), {
+        email: 'jane@example.com',
+        tags,
+      });
+      const errors = await validate(dto);
+      expect(errors.map((error) => error.property)).toContain('tags');
+    }
+
+    const valid = Object.assign(new CreateCustomerDto(), {
+      email: 'jane@example.com',
+      tags: ['vip'],
+    });
+    expect(await validate(valid)).toHaveLength(0);
   });
 
   it('maps a case-insensitive unique-index violation to ConflictException', async () => {
@@ -95,6 +134,24 @@ describe('CustomersService', () => {
     });
   });
 
+  it('filters the list by a lowercased tag using the array containment operator', async () => {
+    await service.findAll('merchant-1', { page: 1, limit: 20, tag: ' VIP ' });
+
+    expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+      'customer.tags @> ARRAY[:tag]::text[]',
+      { tag: 'vip' },
+    );
+  });
+
+  it('does not add a tag predicate when no tag is requested', async () => {
+    await service.findAll('merchant-1', { page: 1, limit: 20 });
+
+    expect(queryBuilder.andWhere).not.toHaveBeenCalledWith(
+      expect.stringContaining('tags'),
+      expect.anything(),
+    );
+  });
+
   it('does not expose a customer owned by another merchant', async () => {
     repository.findOneBy.mockResolvedValueOnce(null);
 
@@ -128,6 +185,33 @@ describe('CustomersService', () => {
     expect(result.email).toBe('new@example.com');
     expect(result.name).toBeNull();
     expect(result.metadata).toEqual({ vip: true });
+  });
+
+  it('replaces tags on update and leaves them alone when omitted', async () => {
+    const stored = () => ({
+      id: 'customer-1',
+      merchantId: 'merchant-1',
+      email: 'jane@example.com',
+      tags: ['vip'],
+    });
+
+    repository.findOneBy.mockResolvedValueOnce(stored());
+    const replaced = await service.update('customer-1', 'merchant-1', {
+      tags: ['Wholesale', 'wholesale', 'EU'],
+    });
+    expect(replaced.tags).toEqual(['wholesale', 'eu']);
+
+    repository.findOneBy.mockResolvedValueOnce(stored());
+    const cleared = await service.update('customer-1', 'merchant-1', {
+      tags: [],
+    });
+    expect(cleared.tags).toEqual([]);
+
+    repository.findOneBy.mockResolvedValueOnce(stored());
+    const untouched = await service.update('customer-1', 'merchant-1', {
+      name: 'Jane',
+    });
+    expect(untouched.tags).toEqual(['vip']);
   });
 
   it('soft-deletes only after confirming ownership', async () => {

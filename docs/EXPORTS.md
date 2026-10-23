@@ -13,6 +13,7 @@ Exports are ideal for datasets that are too large to generate synchronously (tho
 | Type | Description | Status |
 |------|-------------|--------|
 | `payments` | Export payment records with filters | ✅ Implemented |
+| `ledger` | Merchant balance ledger entries; columns are listed in [Ledger](LEDGER.md#csv-export) | ✅ Implemented |
 
 Future export types (invoices, settlements, etc.) will follow the same API pattern.
 

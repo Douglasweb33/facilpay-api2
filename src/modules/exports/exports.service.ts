@@ -6,7 +6,12 @@ import { createReadStream } from 'fs';
 import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-export type ExportType = 'payments' | 'customers' | 'invoices' | 'refunds';
+export type ExportType =
+  | 'payments'
+  | 'customers'
+  | 'invoices'
+  | 'refunds'
+  | 'ledger';
 
 /**
  * Supported output formats for an export.
@@ -140,6 +145,14 @@ export class DatabaseExportsSource implements ExportsSource {
         select: 'r."id", r."paymentId", r."amount", r."reason", r."reasonCode", r."initiatedBy", r."createdAt"',
         from: '"refunds" r JOIN "payments" p ON p."id" = r."paymentId"', alias: 'r', currency: true, status: false,
       },
+      ledger: {
+        select:
+          'l."id", l."createdAt", l."currency", l."account", l."amount", l."referenceType", l."referenceId", l."transactionId"',
+        from: '"ledger_entries" l',
+        alias: 'l',
+        currency: true,
+        status: false,
+      },
     };
     const query = queries[resource];
     const conditions = [resource === 'refunds' ? 'p."merchantId" = $1' : `${query.alias}."merchantId" = $1`];
@@ -160,7 +173,8 @@ export class DatabaseExportsSource implements ExportsSource {
     }
     if (query.currency && typeof filters.currency === 'string') {
       params.push(filters.currency);
-      const currencyAlias = resource === 'invoices' ? 'i' : 'p';
+      const currencyAlias =
+        resource === 'invoices' ? 'i' : resource === 'ledger' ? 'l' : 'p';
       conditions.push(`${currencyAlias}."currency" = $${params.length}`);
     }
 
@@ -246,14 +260,39 @@ export const EXPORT_COLUMNS: Record<ExportType, string[]> = {
     'initiatedBy',
     'createdAt',
   ],
+  ledger: [
+    'id',
+    'createdAt',
+    'currency',
+    'account',
+    'amount',
+    'referenceType',
+    'referenceId',
+    'transactionId',
+  ],
 };
 
 export function sanitizeCsvCell(value: unknown): string {
   if (value === null || value === undefined) return '';
-  let str = String(value);
-  if (/^[=+\-@]/.test(str)) str = `'${str}`;
+  let str = value instanceof Date ? value.toISOString() : String(value);
+  // Plain signed numbers (e.g. ledger deltas like -92.50) cannot execute as formulas.
+  if (/^[=+\-@]/.test(str) && !/^-\d+(\.\d+)?$/.test(str)) str = `'${str}`;
   if (/[",\n\r]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
   return str;
+}
+
+/**
+ * Serialise rows to CSV using the given column order, header row first.
+ */
+export function buildCsv(columns: string[], rows: object[]): string {
+  const lines = [columns.map(sanitizeCsvCell).join(',')];
+  for (const row of rows) {
+    const record = row as Record<string, unknown>;
+    lines.push(
+      columns.map((column) => sanitizeCsvCell(record[column])).join(','),
+    );
+  }
+  return lines.join('\n') + '\n';
 }
 
 /**
