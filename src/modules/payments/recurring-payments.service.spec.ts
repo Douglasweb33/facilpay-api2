@@ -11,6 +11,14 @@ import {
 import {
   RecurringPaymentChargeStatus,
 } from './recurring-payment-charge.entity';
+import { createHash, createHmac } from 'crypto';
+
+jest.mock('./payments.service', () => ({
+  PaymentsService: class PaymentsService {},
+}));
+jest.mock('../logger/logger.service', () => ({
+  AppLogger: class AppLogger {},
+}));
 
 describe('RecurringPaymentsService', () => {
   let service: RecurringPaymentsService;
@@ -19,6 +27,7 @@ describe('RecurringPaymentsService', () => {
   let mockPaymentsService: any;
   let mockIdempotencyService: any;
   let mockWebhooksService: any;
+  let mockEmailNotificationService: any;
   let mockAppLogger: any;
 
   beforeEach(() => {
@@ -30,6 +39,7 @@ describe('RecurringPaymentsService', () => {
       save: jest.fn((entity) => Promise.resolve(entity)),
       find: jest.fn(),
       findOneBy: jest.fn(),
+      createQueryBuilder: jest.fn(),
       manager: {
         getRepository: jest.fn(() => mockCustomerRepository),
       },
@@ -54,6 +64,10 @@ describe('RecurringPaymentsService', () => {
       dispatchEventToMerchant: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockEmailNotificationService = {
+      sendPayerRecurringPaymentReminder: jest.fn().mockResolvedValue(undefined),
+    };
+
     mockAppLogger = {
       child: jest.fn().mockReturnValue({ info: jest.fn(), error: jest.fn(), warn: jest.fn() }),
     };
@@ -64,10 +78,125 @@ describe('RecurringPaymentsService', () => {
       mockPaymentsService,
       mockIdempotencyService,
       mockWebhooksService,
-      { sendPayerRecurringPaymentReminder: jest.fn() } as any,
+      mockEmailNotificationService,
       { get: jest.fn((_key, defaultValue) => defaultValue) } as any,
       mockAppLogger,
     );
+  });
+
+  describe('payer cancellation links', () => {
+    it('validates and consumes a signed cancellation link once', async () => {
+      const plan: any = {
+        id: 'plan-1',
+        amount: 25,
+        currency: 'USD',
+        description: 'Monthly plan',
+        nextRunAt: new Date(Date.now() + 86400000),
+        payerEmail: 'payer@example.com',
+        merchantEmail: 'merchant@example.com',
+        merchantId: 'merchant-1',
+        payerCancellationEnabled: true,
+        status: RecurringPaymentStatus.ACTIVE,
+        cancelTokenHash: null,
+        cancelTokenExpiresAt: null,
+        cancelTokenUsedAt: null,
+      };
+      mockRepository.save.mockImplementation(async (entity) => entity);
+      await (service as any).notifyPayer(plan);
+
+      const cancelUrl = mockEmailNotificationService
+        .sendPayerRecurringPaymentReminder.mock.calls[0][8];
+      const token = new URL(cancelUrl).searchParams.get('token');
+      expect(token).toBeTruthy();
+      expect(plan.cancelTokenHash).toBe(
+        createHash('sha256').update(token).digest('hex'),
+      );
+
+      mockRepository.findOneBy.mockResolvedValue(plan);
+      await expect(service.getPayerCancellation(token)).resolves.toMatchObject({
+        planId: 'plan-1',
+        amount: 25,
+        currency: 'USD',
+      });
+
+      const query: any = {};
+      for (const method of ['update', 'set', 'where', 'andWhere']) {
+        query[method] = jest.fn().mockImplementation((value) => {
+          if (method === 'set') Object.assign(plan, value);
+          return query;
+        });
+      }
+      query.execute = jest.fn().mockResolvedValue({ affected: 1 });
+      mockRepository.createQueryBuilder.mockReturnValue(query);
+
+      await service.cancelWithToken(token);
+      expect(plan.status).toBe(RecurringPaymentStatus.CANCELLED);
+      expect(plan.cancelTokenUsedAt).toBeInstanceOf(Date);
+      expect(mockWebhooksService.dispatchEventToMerchant).toHaveBeenCalledWith(
+        'merchant-1',
+        'recurring.cancelled',
+        { planId: 'plan-1' },
+      );
+      await expect(service.getPayerCancellation(token)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('does not include a cancellation link when the merchant opted out', async () => {
+      const plan = {
+        id: 'plan-1',
+        payerEmail: 'payer@example.com',
+        merchantEmail: 'merchant@example.com',
+        payerCancellationEnabled: false,
+      } as any;
+
+      await (service as any).notifyPayer(plan);
+
+      expect(
+        mockEmailNotificationService.sendPayerRecurringPaymentReminder.mock
+          .calls[0][8],
+      ).toBe('');
+      expect(mockRepository.save).not.toHaveBeenCalled();
+    });
+
+    it('invalidates an existing token when the merchant opts out', async () => {
+      const plan = {
+        id: 'plan-1',
+        createdBy: 'merchant-1',
+        payerCancellationEnabled: true,
+        cancelTokenHash: 'a'.repeat(64),
+        cancelTokenExpiresAt: new Date(Date.now() + 86400000),
+        cancelTokenUsedAt: null,
+      } as any;
+      mockRepository.findOneBy.mockResolvedValue(plan);
+
+      await service.update('plan-1', 'merchant-1', {
+        payerCancellationEnabled: false,
+      });
+
+      expect(plan.payerCancellationEnabled).toBe(false);
+      expect(plan.cancelTokenHash).toBeNull();
+      expect(plan.cancelTokenExpiresAt).toBeNull();
+      expect(mockRepository.save).toHaveBeenCalledWith(plan);
+    });
+
+    it('rejects a validly signed but expired cancellation token', async () => {
+      const encodedPayload = Buffer.from(
+        JSON.stringify({
+          planId: 'plan-1',
+          expiresAt: Date.now() - 1000,
+          nonce: 'nonce',
+        }),
+      ).toString('base64url');
+      const signature = createHmac('sha256', 'your-secret-key')
+        .update(encodedPayload)
+        .digest('hex');
+
+      await expect(
+        service.getPayerCancellation(`${encodedPayload}.${signature}`),
+      ).rejects.toThrow(BadRequestException);
+      expect(mockRepository.findOneBy).not.toHaveBeenCalled();
+    });
   });
 
   describe('create', () => {
@@ -408,7 +537,7 @@ describe('RecurringPaymentsService', () => {
           customerId: 'customer-1',
           merchantId: 'merchant-1',
         }),
-        'merchant-1',
+        'plan-1',
       );
     });
 
