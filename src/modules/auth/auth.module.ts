@@ -31,6 +31,8 @@ import { LoginAlertsService } from './login-alerts.service';
 import { MerchantsModule } from '../merchants/merchants.module';
 import { MagicLinkToken } from './entities/magic-link-token.entity';
 import { Session } from './entities/session.entity';
+import { GoogleOidcService } from './google-oidc.service';
+import { Sep10Service } from './sep10.service';
 
 @Module({
   imports: [
@@ -65,6 +67,8 @@ import { Session } from './entities/session.entity';
   controllers: [AuthController],
   providers: [
     AuthService,
+    GoogleOidcService,
+    Sep10Service,
     JwtStrategy,
     JwtAuthGuard,
     RolesGuard,
@@ -76,6 +80,8 @@ import { Session } from './entities/session.entity';
   ],
   exports: [
     AuthService,
+    GoogleOidcService,
+    Sep10Service,
     MailService,
     JwtAuthGuard,
     RolesGuard,
