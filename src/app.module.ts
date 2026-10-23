@@ -35,6 +35,7 @@ import { InvoicesModule } from './modules/invoices/invoices.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
 import { ProductsModule } from './modules/products/products.module';
 import { TeamModule } from './modules/team/team.module';
+import { CustomersModule } from './modules/customers/customers.module';
 
 import { AdminMetricsModule } from './modules/admin/admin-metrics.module';
 
@@ -78,6 +79,7 @@ import { AdminMetricsModule } from './modules/admin/admin-metrics.module';
     CouponsModule,
     ProductsModule,
     TeamModule,
+    CustomersModule,
   ],
   controllers: [AppController],
   providers: [

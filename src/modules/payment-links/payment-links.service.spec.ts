@@ -128,3 +128,81 @@ describe('PaymentLinksService duplicate', () => {
     ).rejects.toThrow(ForbiddenException);
   });
 });
+
+describe('PaymentLinksService bulkDeactivate', () => {
+  const merchantId = 'merchant-id';
+
+  function createService(owned: Array<{ id: string; isActive: boolean }>) {
+    const repo = {
+      find: jest.fn().mockResolvedValue(owned.map((l) => ({ ...l, merchantId }))),
+      update: jest.fn().mockResolvedValue({ affected: owned.length }),
+    };
+    const service = new PaymentLinksService(
+      repo as any,
+      {} as any,
+      {} as any,
+      { child: () => ({}) } as any,
+      {} as any,
+    );
+    return { service, repo };
+  }
+
+  it('deactivates owned active links and returns per-id results', async () => {
+    const { service, repo } = createService([
+      { id: 'a', isActive: true },
+      { id: 'b', isActive: false },
+    ]);
+
+    const result = await service.bulkDeactivate(['a', 'b', 'c'], merchantId);
+
+    expect(repo.find).toHaveBeenCalledWith({
+      where: { id: expect.anything(), merchantId },
+    });
+    expect(repo.update).toHaveBeenCalledTimes(1);
+    const [criteria, patch] = repo.update.mock.calls[0];
+    expect(criteria.merchantId).toBe(merchantId);
+    expect(criteria.id.value).toEqual(['a']);
+    expect(patch).toEqual({ isActive: false });
+
+    expect(result).toEqual({
+      results: [
+        { id: 'a', status: 'deactivated' },
+        { id: 'b', status: 'already_inactive' },
+        { id: 'c', status: 'skipped', reason: 'Payment link not found' },
+      ],
+      deactivated: 1,
+      skipped: 1,
+    });
+  });
+
+  it('skips ids belonging to other merchants without updating anything', async () => {
+    const { service, repo } = createService([]);
+
+    const result = await service.bulkDeactivate(['foreign-id'], merchantId);
+
+    expect(repo.update).not.toHaveBeenCalled();
+    expect(result.results).toEqual([
+      { id: 'foreign-id', status: 'skipped', reason: 'Payment link not found' },
+    ]);
+    expect(result.deactivated).toBe(0);
+  });
+
+  it('de-duplicates repeated ids', async () => {
+    const { service } = createService([{ id: 'a', isActive: true }]);
+
+    const result = await service.bulkDeactivate(['a', 'a', 'a'], merchantId);
+
+    expect(result.results).toHaveLength(1);
+    expect(result.deactivated).toBe(1);
+  });
+
+  it('rejects more than 100 ids', async () => {
+    const { service, repo } = createService([]);
+    const ids = Array.from({ length: 101 }, (_, i) => `id-${i}`);
+
+    await expect(service.bulkDeactivate(ids, merchantId)).rejects.toThrow(
+      'A maximum of 100 ids can be deactivated at once',
+    );
+    expect(repo.find).not.toHaveBeenCalled();
+  });
+});
