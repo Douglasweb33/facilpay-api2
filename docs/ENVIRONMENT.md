@@ -142,6 +142,7 @@ used for IP allowlist / geo-restriction checks.
 | Variable | Description | Default | Required | Example |
 | --- | --- | --- | --- | --- |
 | `WEBHOOK_SECRET` | Secret used for HMAC webhook signature verification | *(placeholder)* | **Yes** | a long random string |
+| `WEBHOOK_SECRET_GRACE_PERIOD_HOURS` | Hours the previous endpoint signing secret keeps signing deliveries after `POST /v1/webhooks/:id/rotate-secret` (a request can override it with `gracePeriodHours`) | `24` | No | `48` |
 
 > The `SUPPORTED_CURRENCIES` variable is read by
 > `src/modules/payments/currency-config.service.ts`; currencies not in

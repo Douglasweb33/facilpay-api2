@@ -6,6 +6,7 @@ import {
   Min,
   MaxLength,
   IsPositive,
+  IsBoolean,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RecurringPaymentInterval } from '../recurring-payment.entity';
@@ -58,6 +59,13 @@ export class UpdateRecurringPaymentDto {
     maxLength: 500,
   })
   description?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  @ApiPropertyOptional({
+    description: 'Whether the payer can cancel the plan from reminder emails',
+  })
+  payerCancellationEnabled?: boolean;
 }
 
 export class PreviewRecurringPaymentProrationDto {
