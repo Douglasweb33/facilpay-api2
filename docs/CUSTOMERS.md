@@ -221,6 +221,40 @@ Customers owned by other merchants or soft-deleted customers return 404.
 
 ---
 
+## Customer Portal
+
+Create a short-lived, signed customer portal link for a customer owned by the
+authenticated merchant:
+
+```http
+POST /v1/customers/:id/portal-sessions
+Authorization: Bearer <access_token>
+```
+
+The response includes a URL and its expiration time. Links expire after one
+hour by default. Set `CUSTOMER_PORTAL_SESSION_TTL_SECONDS` to an integer from 1
+to 86400 to override the lifetime.
+
+```json
+{
+  "url": "https://api.example.com/v1/public/customer-portal?token=<signed-token>",
+  "expiresAt": "2026-10-21T13:00:00.000Z"
+}
+```
+
+The public read-only endpoint accepts that signed token and returns the
+customer's non-draft invoices, payments, and recurring plans:
+
+```http
+GET /v1/public/customer-portal?token=<signed-token>
+```
+
+The token is restricted to one customer and merchant. Deleted customers,
+invalid tokens, and expired tokens are rejected. Responses omit merchant
+metadata, callback URLs, invoice payment tokens, and other internal fields.
+
+---
+
 ## Update a Customer
 
 ```
