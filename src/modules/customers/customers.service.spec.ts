@@ -35,6 +35,8 @@ describe('CustomersService', () => {
     };
     service = new CustomersService(
       repository as unknown as Repository<Customer>,
+      {} as any,
+      {} as any,
     );
   });
 
