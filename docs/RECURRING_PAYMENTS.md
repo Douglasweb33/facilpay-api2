@@ -8,8 +8,8 @@ billing limits; a background scheduler picks up every due plan and creates a **n
 through the existing `PaymentsService`, so fees, splits, webhooks and receipts behave exactly like
 a one-off payment.
 
-This document covers the plan model, the full lifecycle, the seven lifecycle endpoints, the
-automatic scheduling/failure behaviour, and the webhooks and emails a plan emits.
+This document covers the plan model, the full lifecycle, its endpoints, the
+automatic scheduling/failure behaviour, proration preview, and the webhooks and emails a plan emits.
 
 > Source of truth: `src/modules/payments/recurring-payments.controller.ts`,
 > `src/modules/payments/recurring-payments.service.ts` and
@@ -48,7 +48,10 @@ The base path is `/v1/recurring-payments`.
 | `payerCancellationEnabled` | boolean | no | `true` | Include a signed, single-use cancellation link in payer reminders. Set to `false` to opt out. |
 
 `interval` copies forward: `PATCH` changes apply to **future** scheduled runs only — payments that
-already exist are never modified.
+already exist are never modified. Amount changes default to no proration. Set
+`prorationBehavior` to `create_adjustment` to include the unused-period fraction of the amount
+difference in the next charge. Downgrade adjustments are capped so the resulting charge remains
+at least `0.01`.
 
 ## Status lifecycle
 
@@ -213,6 +216,7 @@ curl "http://localhost:3000/v1/recurring-payments/9f1c2b3a-4d5e-6f70-8192-a3b4c5
       "cycleNumber": 1,
       "paymentId": "aa11bb22-cc33-dd44-ee55-ff6677889900",
       "amount": "29.99",
+      "prorationAmount": "0.00",
       "status": "succeeded",
       "failureReason": null,
       "attemptedAt": "2026-11-12T00:00:00.000Z"
@@ -240,10 +244,25 @@ invalidates any previously issued cancellation link.
 curl -X PATCH http://localhost:3000/v1/recurring-payments/9f1c2b3a-4d5e-6f70-8192-a3b4c5d6e7f8 \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"amount": 39.99, "interval": "weekly", "description": "Pro plan"}'
+  -d '{"amount": 39.99, "interval": "weekly", "description": "Pro plan", "prorationBehavior": "create_adjustment"}'
 ```
 
-### 6. Pause a plan
+### 6. Preview amount proration
+
+```
+POST /v1/recurring-payments/:id/proration-preview
+```
+
+Pass the proposed amount to preview the adjustment and next charge amount for the current period:
+
+```json
+{ "amount": 39.99 }
+```
+
+The response includes `unusedFraction`, `adjustmentAmount` and `nextChargeAmount`. Plans without a
+completed current billing period return a zero adjustment.
+
+### 7. Pause a plan
 
 ```
 POST /v1/recurring-payments/:id/pause
@@ -256,7 +275,7 @@ curl -X POST http://localhost:3000/v1/recurring-payments/9f1c2b3a-4d5e-6f70-8192
 
 Sets `status` to `paused`. Returns `409 Conflict` if the plan is not `active`.
 
-### 7. Resume a plan
+### 8. Resume a plan
 
 ```
 POST /v1/recurring-payments/:id/resume
@@ -270,7 +289,7 @@ curl -X POST http://localhost:3000/v1/recurring-payments/9f1c2b3a-4d5e-6f70-8192
 Sets `status` back to `active`; a `nextRunAt` in the past is reset to the current time. Returns
 `409 Conflict` if the plan is not `paused`.
 
-### 8. Cancel a plan
+### 9. Cancel a plan
 
 ```
 POST /v1/recurring-payments/:id/cancel

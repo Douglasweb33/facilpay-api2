@@ -22,7 +22,10 @@ import {
 } from '@nestjs/swagger';
 import { RecurringPaymentsService } from './recurring-payments.service';
 import { CreateRecurringPaymentDto } from './dto/create-recurring-payment.dto';
-import { UpdateRecurringPaymentDto } from './dto/update-recurring-payment.dto';
+import {
+  PreviewRecurringPaymentProrationDto,
+  UpdateRecurringPaymentDto,
+} from './dto/update-recurring-payment.dto';
 import { RecurringPayment } from './recurring-payment.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { Public } from '../auth/decorators/public.decorator';
@@ -111,6 +114,22 @@ export class RecurringPaymentsController {
   @ApiNotFoundResponse({ description: 'Plan not found.' })
   findOne(@Param('id') id: string, @Request() req: any) {
     return this.service.findOne(id, req.user.id);
+  }
+
+  @Post(':id/proration-preview')
+  @ApiBearerAuth('bearer')
+  @ApiOperation({
+    summary: 'Preview proration for a recurring payment amount change',
+  })
+  @ApiParam({ name: 'id', description: 'Recurring payment plan UUID' })
+  @ApiOkResponse({ description: 'Proration preview for the current period.' })
+  @ApiNotFoundResponse({ description: 'Plan not found.' })
+  previewProration(
+    @Param('id') id: string,
+    @Body() dto: PreviewRecurringPaymentProrationDto,
+    @Request() req: any,
+  ) {
+    return this.service.previewProration(id, req.user.id, dto.amount);
   }
 
   @Patch(':id')
